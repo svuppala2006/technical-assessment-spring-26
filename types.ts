@@ -36,7 +36,9 @@ export interface User {
 }
 
 export interface VoteData {
-  [optionId: string]: number;
+  [questionId: string]: {
+    [optionId: string]: number;
+  };
 }
 
 export interface UserVotes {

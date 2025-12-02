@@ -23,7 +23,7 @@ export const QuizSection: React.FC<Props> = ({ questions }) => {
     (async () => {
       try {
         await initVotes(questions); // ensure seed happens before counts fetch
-        const votes = await getVoteCounts();
+        const votes = await getVoteCounts(questions);
         const myVotes = await getUserVotes();
         // Load voters for each question (simple sequential for now)
         const votersMap: Record<string, Record<string, string[]>> = {};
@@ -66,6 +66,8 @@ export const QuizSection: React.FC<Props> = ({ questions }) => {
       setShowIdentityModal(true);
       return;
     }
+    // Ignore if clicking the same option again
+    if (userVotes[qId] === optId) return;
     executeVote(qId, optId);
   };
 
@@ -73,7 +75,7 @@ export const QuizSection: React.FC<Props> = ({ questions }) => {
     // Optimistic selection update
     setUserVotes(prev => ({ ...prev, [qId]: optId }));
     try {
-      const newVotes = await submitVote(qId, optId);
+      const newVotes = await submitVote(qId, optId, questions);
       setVoteData(newVotes);
     } catch (err: any) {
       console.error(err);
@@ -124,7 +126,7 @@ export const QuizSection: React.FC<Props> = ({ questions }) => {
         {questions.map((q) => {
           const hasVoted = !!userVotes[q.id];
           const isCorrect = userVotes[q.id] === q.correctAnswerId;
-          const totalVotesForQ = q.options.reduce((acc, opt) => acc + (voteData[opt.id] || 0), 0);
+          const totalVotesForQ = q.options.reduce((acc, opt) => acc + ((voteData[q.id]?.[opt.id]) || 0), 0);
           const optionVoters = votersByQuestion[q.id] || {};
 
           return (
@@ -142,7 +144,7 @@ export const QuizSection: React.FC<Props> = ({ questions }) => {
                 {q.options.map((opt) => {
                   const isSelected = userVotes[q.id] === opt.id;
                   const isAnswer = opt.id === q.correctAnswerId;
-                  const voteCount = voteData[opt.id] || 0;
+                  const voteCount = (voteData[q.id]?.[opt.id]) || 0;
                   const percentage = totalVotesForQ > 0 ? Math.round((voteCount / totalVotesForQ) * 100) : 0;
 
                   // Styles based on state

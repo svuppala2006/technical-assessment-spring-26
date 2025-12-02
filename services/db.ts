@@ -42,8 +42,8 @@ export const setUserName = (name: string): void => {
 };
 
 // Helper to aggregate votes into a map
-function toVoteMap(docs: Array<{ optionId: string; count: number }>): VoteData {
-  return docs.reduce((acc, v) => { acc[v.optionId] = v.count; return acc; }, {} as VoteData);
+function ensureQuestionMap(map: VoteData, questionId: string) {
+  if (!map[questionId]) map[questionId] = {} as any;
 }
 
 // --- Comments ---
@@ -79,21 +79,29 @@ export const postComment = async (pageId: string, text: string): Promise<Comment
 // --- Quiz/Polling ---
 
 export const initVotes = async (questions: QuizQuestion[]) => {
-  const optionIds = questions.flatMap(q => q.options.map(o => o.id));
-  await Promise.all(optionIds.map(async (optionId) => {
-    const voteDocRef = doc(db, 'votes', `vote_${optionId}`);
-    const existing = await getDoc(voteDocRef);
-    if (!existing.exists()) {
-      await setDoc(voteDocRef, { optionId, count: Math.floor(Math.random() * 5) + 1 });
-    }
-  }));
+  // Seed vote docs per question+option to ensure isolation between questions
+  await Promise.all(
+    questions.flatMap(q => q.options.map(async (o) => {
+      const voteDocRef = doc(db, 'votes', `vote_${q.id}_${o.id}`);
+      const existing = await getDoc(voteDocRef);
+      if (!existing.exists()) {
+        await setDoc(voteDocRef, { questionId: q.id, optionId: o.id, count: 0 });
+      }
+    }))
+  );
 };
 
-export const getVoteCounts = async (): Promise<VoteData> => {
-  const votesCol = collection(db, 'votes');
-  const snap = await getDocs(votesCol);
-  const docs = snap.docs.map(d => d.data() as { optionId: string; count: number });
-  return toVoteMap(docs);
+export const getVoteCounts = async (questions: QuizQuestion[]): Promise<VoteData> => {
+  // Return counts nested by questionId -> optionId
+  const result: VoteData = {};
+  for (const q of questions) {
+    ensureQuestionMap(result, q.id);
+    for (const o of q.options) {
+      const snap = await getDoc(doc(db, 'votes', `vote_${q.id}_${o.id}`));
+      result[q.id][o.id] = snap.exists() ? ((snap.data() as any).count || 0) : 0;
+    }
+  }
+  return result;
 };
 
 export const getUserVotes = async (): Promise<UserVotes> => {
@@ -126,7 +134,7 @@ export const getOptionVoters = async (questionId: string): Promise<Record<string
   return result;
 };
 
-export const submitVote = async (questionId: string, optionId: string): Promise<VoteData> => {
+export const submitVote = async (questionId: string, optionId: string, questions: QuizQuestion[]): Promise<VoteData> => {
   const userName = getUserName();
   if (!userName) throw new Error('User not identified');
 
@@ -137,11 +145,16 @@ export const submitVote = async (questionId: string, optionId: string): Promise<
 
   const newOptionId = optionId;
 
+  // No-op if user clicks the same option again
+  if (prevOptionId && prevOptionId === newOptionId) {
+    return await getVoteCounts(questions);
+  }
+
   // Use a transaction for consistent counters
   await runTransaction(db, async (transaction) => {
-    // Perform all reads first
-    const prevVoteRef = prevOptionId ? doc(db, 'votes', `vote_${prevOptionId}`) : null;
-    const newVoteRef = doc(db, 'votes', `vote_${newOptionId}`);
+    // Perform all reads first (scoped to question)
+    const prevVoteRef = prevOptionId ? doc(db, 'votes', `vote_${questionId}_${prevOptionId}`) : null;
+    const newVoteRef = doc(db, 'votes', `vote_${questionId}_${newOptionId}`);
     const userVoteSnapTx = await transaction.get(userVoteRef);
     const prevVoteSnap = prevVoteRef ? await transaction.get(prevVoteRef) : null;
     const newVoteSnap = await transaction.get(newVoteRef);
@@ -156,11 +169,11 @@ export const submitVote = async (questionId: string, optionId: string): Promise<
       const newCount = (newVoteSnap.data() as any).count || 0;
       transaction.update(newVoteRef, { count: newCount + 1 });
     } else {
-      transaction.set(newVoteRef, { optionId: newOptionId, count: 1 });
+      transaction.set(newVoteRef, { questionId, optionId: newOptionId, count: 1 });
     }
 
     transaction.set(userVoteRef, { userName, questionId, optionId: newOptionId }, { merge: true });
   });
 
-  return await getVoteCounts();
+  return await getVoteCounts(questions);
 };
