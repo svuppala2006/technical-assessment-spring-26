@@ -18,7 +18,10 @@ Please check off which features you have implemented:
 - [x] Deploy the frontend and backend if you can using some of the free deployment tools we talked about in the workshops!
 
 ## Screen Recording 
-**Link**: [paste it here]
+**Link**: https://youtu.be/tDdPSsunk1Y
+
+## Deployed Website
+**Link**: https://technical-assessment-spring-26-sigma.vercel.app/
 
 ## Written Portion
 1. **How did the project go? What parts of it did you most enjoy / find yourself good at?**
