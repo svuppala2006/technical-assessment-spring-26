@@ -110,6 +110,22 @@ export const getUserVotes = async (): Promise<UserVotes> => {
   return map;
 };
 
+// Returns a mapping of optionId -> array of user names who voted that option for the given question
+export const getOptionVoters = async (questionId: string): Promise<Record<string, string[]>> => {
+  const uvCol = collection(db, 'userVotes');
+  const q = query(uvCol, where('questionId', '==', questionId));
+  const snap = await getDocs(q);
+  const result: Record<string, string[]> = {};
+  snap.docs.forEach(d => {
+    const data = d.data() as { userName: string; questionId: string; optionId: string };
+    if (!result[data.optionId]) result[data.optionId] = [];
+    result[data.optionId].push(data.userName);
+  });
+  // Sort names alphabetically for consistent UI
+  Object.keys(result).forEach(k => result[k].sort((a, b) => a.localeCompare(b)));
+  return result;
+};
+
 export const submitVote = async (questionId: string, optionId: string): Promise<VoteData> => {
   const userName = getUserName();
   if (!userName) throw new Error('User not identified');
@@ -123,25 +139,26 @@ export const submitVote = async (questionId: string, optionId: string): Promise<
 
   // Use a transaction for consistent counters
   await runTransaction(db, async (transaction) => {
-    // Decrement previous if changing
-    if (prevOptionId && prevOptionId !== newOptionId) {
-      const prevVoteRef = doc(db, 'votes', `vote_${prevOptionId}`);
-      const prevVoteSnap = await transaction.get(prevVoteRef);
-      if (prevVoteSnap.exists()) {
-        const prevCount = (prevVoteSnap.data() as any).count || 0;
-        transaction.update(prevVoteRef, { count: Math.max(0, prevCount - 1) });
-      }
-    }
-    // Increment new
+    // Perform all reads first
+    const prevVoteRef = prevOptionId ? doc(db, 'votes', `vote_${prevOptionId}`) : null;
     const newVoteRef = doc(db, 'votes', `vote_${newOptionId}`);
+    const userVoteSnapTx = await transaction.get(userVoteRef);
+    const prevVoteSnap = prevVoteRef ? await transaction.get(prevVoteRef) : null;
     const newVoteSnap = await transaction.get(newVoteRef);
+
+    // Then perform writes
+    if (prevOptionId && prevOptionId !== newOptionId && prevVoteRef && prevVoteSnap && prevVoteSnap.exists()) {
+      const prevCount = (prevVoteSnap.data() as any).count || 0;
+      transaction.update(prevVoteRef, { count: Math.max(0, prevCount - 1) });
+    }
+
     if (newVoteSnap.exists()) {
       const newCount = (newVoteSnap.data() as any).count || 0;
       transaction.update(newVoteRef, { count: newCount + 1 });
     } else {
       transaction.set(newVoteRef, { optionId: newOptionId, count: 1 });
     }
-    // Upsert user vote
+
     transaction.set(userVoteRef, { userName, questionId, optionId: newOptionId }, { merge: true });
   });
 

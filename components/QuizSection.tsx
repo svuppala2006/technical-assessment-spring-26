@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { QuizQuestion, VoteData } from '../types';
-import { getVoteCounts, getUserVotes, submitVote, getUserName, initVotes } from '../services/db';
+import { getVoteCounts, getUserVotes, submitVote, getUserName, initVotes, getOptionVoters } from '../services/db';
 import { diagnoseFirestoreConnectivity } from '../services/firebase';
 import { IdentityModal } from './IdentityModal';
 import { CheckCircle2, XCircle, BarChart2, AlertCircle } from 'lucide-react';
@@ -16,6 +16,7 @@ export const QuizSection: React.FC<Props> = ({ questions }) => {
   const [pendingVote, setPendingVote] = useState<{ qId: string; optId: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [votersByQuestion, setVotersByQuestion] = useState<Record<string, Record<string, string[]>>>({});
 
   useEffect(() => {
     let active = true;
@@ -24,9 +25,15 @@ export const QuizSection: React.FC<Props> = ({ questions }) => {
         await initVotes(questions); // ensure seed happens before counts fetch
         const votes = await getVoteCounts();
         const myVotes = await getUserVotes();
+        // Load voters for each question (simple sequential for now)
+        const votersMap: Record<string, Record<string, string[]>> = {};
+        for (const q of questions) {
+          votersMap[q.id] = await getOptionVoters(q.id);
+        }
         if (!active) return;
         setVoteData(votes);
         setUserVotes(myVotes);
+        setVotersByQuestion(votersMap);
       } catch (e: any) {
         if (!active) return;
         console.error(e);
@@ -118,6 +125,7 @@ export const QuizSection: React.FC<Props> = ({ questions }) => {
           const hasVoted = !!userVotes[q.id];
           const isCorrect = userVotes[q.id] === q.correctAnswerId;
           const totalVotesForQ = q.options.reduce((acc, opt) => acc + (voteData[opt.id] || 0), 0);
+          const optionVoters = votersByQuestion[q.id] || {};
 
           return (
             <div key={q.id} className="bg-slate-800/50 border border-slate-700 rounded-xl p-6 relative overflow-hidden">
@@ -170,6 +178,21 @@ export const QuizSection: React.FC<Props> = ({ questions }) => {
                           </span>
                         )}
                       </div>
+                      {/* Voters list */}
+                      {hasVoted && (optionVoters[opt.id]?.length ?? 0) > 0 && (
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {(optionVoters[opt.id] || []).slice(0, 6).map(name => (
+                            <span key={name} className="text-xs px-2 py-1 rounded-full bg-slate-700 text-slate-200">
+                              {name}
+                            </span>
+                          ))}
+                          {(optionVoters[opt.id]?.length || 0) > 6 && (
+                            <span className="text-xs px-2 py-1 rounded-full bg-slate-700 text-slate-300">
+                              +{(optionVoters[opt.id]?.length || 0) - 6} more
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </button>
                   );
                 })}
